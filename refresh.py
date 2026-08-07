@@ -18,9 +18,56 @@ Run manually with:
 """
 
 from __future__ import annotations
+import os
+import sys
 import hashlib
 import logging
 from datetime import datetime, timezone
+
+
+def _require_real_database_url() -> None:
+    """
+    Guards against the exact failure mode this function is named for: an
+    empty or missing DATABASE_URL producing either a cryptic SQLAlchemy
+    parse error, or worse, silently falling back to db.py's local-SQLite
+    default (which exists only to make `python main.py` runnable with zero
+    setup for quick local testing). refresh.py's entire job is to populate
+    the SHARED Postgres database main.py serves from -- if it silently
+    wrote to a throwaway local SQLite file instead, the refresh would look
+    like it "succeeded" while every subscriber-facing request kept serving
+    stale/empty data, with nothing in the logs pointing at why.
+
+    This check runs BEFORE `from db import ...` on purpose -- db.py creates
+    its engine at import time using whatever DATABASE_URL it finds (or the
+    SQLite fallback), so validating AFTER that import would be too late.
+    """
+    db_url = os.environ.get("DATABASE_URL", "").strip()
+
+    if not db_url:
+        sys.exit(
+            "ERROR: DATABASE_URL is not set.\n\n"
+            "refresh.py requires an explicit Postgres connection string -- "
+            "it must not silently fall back to db.py's local-SQLite default, "
+            "since that default exists only for quick local `python main.py` "
+            "testing and isn't the shared database main.py actually serves "
+            "subscribers from.\n\n"
+            "Fix:\n"
+            "  Locally:         add DATABASE_URL=postgresql://user:pass@host:5432/dbname to your .env\n"
+            "  GitHub Actions:  repo Settings -> Secrets and variables -> Actions "
+            "-> New repository secret -> Name: DATABASE_URL"
+        )
+
+    if not db_url.startswith(("postgresql://", "postgresql+psycopg2://")):
+        detected_scheme = db_url.split("://")[0] if "://" in db_url else db_url[:20]
+        sys.exit(
+            f"ERROR: DATABASE_URL doesn't look like a Postgres connection string "
+            f"(got scheme: '{detected_scheme}'). refresh.py requires Postgres -- "
+            "SQLite is only db.py's default for local main.py testing, never "
+            "appropriate for the shared refresh pipeline."
+        )
+
+
+_require_real_database_url()
 
 from db import SessionLocal, init_db
 from models import Job, TrackedCompany

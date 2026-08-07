@@ -23,7 +23,26 @@ from sqlalchemy.orm import sessionmaker
 
 load_dotenv()
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./local_dev.db")
+
+def _normalize_database_url(url: str) -> str:
+    """
+    SQLAlchemy 2.x dropped support for the `postgres://` scheme alias --
+    it only recognizes `postgresql://` now. Several hosted providers
+    (Aiven, Heroku, and others) still hand out `postgres://` URLs in parts
+    of their UI even though the underlying database is identical, so this
+    self-corrects the scheme regardless of which form gets pasted into
+    .env, Render's dashboard, or a GitHub secret. Without this, you get a
+    cryptic `NoSuchModuleError: Can't load plugin: sqlalchemy.dialects:postgres`
+    instead of an obvious fix.
+    """
+    if url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://"):]
+    return url
+
+
+DATABASE_URL = _normalize_database_url(
+    os.environ.get("DATABASE_URL", "sqlite:///./local_dev.db")
+)
 
 # SQLite needs this flag for use across threads (FastAPI's request handling);
 # Postgres doesn't accept it, so only pass it for the local-dev fallback.
